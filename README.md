@@ -1,22 +1,48 @@
-# Nh-m-8-PTTKGT
-"""
-de06.py - Đề 6: Xếp lịch thi = bài toán tô màu đồ thị (min số màu, sắc số chi(G)).
+# Nhóm 8 – PTTKGT – Đề 6: Xếp lịch thi (bài toán tô màu đồ thị)
 
-Nội dung:
-  * Bộ đọc DIMACS (.col) có kiểm tra: bỏ cạnh lặp / khuyên, báo số cạnh, kiểm tra chỉ số đỉnh.
-  * Hàm kiểm tra lời giải: đếm cạnh xung đột + số màu đã dùng.
-  * Cận dưới: clique tham lam (nhiều lần khởi tạo ngẫu nhiên)   omega(G) <= chi(G).
-  * Heuristic xây dựng: Welsh-Powell, DSATUR.
-  * Thuật toán chính xác: quay lui + cắt nhánh kiểu DSATUR, dùng cận dưới clique để dừng sớm.
-  * Tìm kiếm cục bộ với k cố định (đổi màu 1 đỉnh xung đột; hoán đổi màu 2 đỉnh),
-    đánh giá delta bằng bảng láng giềng gamma[v][c] (số láng giềng của v mang màu c).
-  * TabuCol (Hertz & de Werra 1987): cập nhật bảng delta trong O(bậc) mỗi bước.
-  * Quy trình giảm dần k: DSATUR -> TabuCol với k = best-1, best-2, ...
-  * Thống kê nhiều lần chạy: best / trung bình / số lần đạt, thời gian.
+Mỗi môn thi là một đỉnh; hai môn có sinh viên chung được nối cạnh. Tô màu các đỉnh (màu = ca thi) sao cho hai đỉnh kề khác màu và dùng ít màu nhất (sắc số χ(G)).
 
-Dùng:
-  python de06.py vidu.col                       # chạy tất cả thuật toán trên 1 file
-  python de06.py vidu.col --alg exact           # exact | wp | dsatur | tabu | ls | all
-  python de06.py --selftest --time 10 --runs 5  # sinh myciel3-5, queen, gnp125 và chạy thử
-  python de06.py g.col --out g.sol              # ghi lời giải (dòng 1: k; dòng 2: c(1..n))
-"""
+## Cấu trúc thư mục
+
+```
+de06.py            chương trình chính (dòng lệnh) + máy chủ cho trang web
+visualize/         trang web trực quan hoá (index.html, chạy trên trình duyệt)
+data/              đồ thị mẫu định dạng DIMACS (.col)
+vidu.sol           lời giải mẫu cho ví dụ nhỏ của đề
+report/            báo cáo
+```
+
+## Thuật toán (de06.py)
+
+- Đọc DIMACS có kiểm tra, kiểm chứng lời giải (đếm cạnh xung đột, số màu).
+- Cận dưới clique ω(G) ≤ χ(G).
+- Welsh–Powell, DSATUR.
+- Quay lui cắt nhánh (chính xác) với cận dưới clique.
+- Tìm kiếm cục bộ với k cố định (đổi màu 1 đỉnh, hoán đổi màu 2 đỉnh), bảng delta γ[v][c].
+- TabuCol (Hertz – de Werra 1987), quy trình giảm dần k.
+- GA lai HEA: toán tử GPX (Galinier – Hao 1999) + TabuCol.
+- Bộ lịch thi Toronto (.crs/.stu): tối thiểu số ca thi, sau đó giảm chi phí khoảng cách (phạt 2^(5−d)).
+
+## Cách chạy
+
+Yêu cầu: Python 3 (không cần thư viện ngoài).
+
+```
+python de06.py data/vidu.col --out vidu.sol
+python de06.py data/myciel4.col --alg exact,tabu,hea --time 30 --runs 10
+python de06.py --selftest --time 10 --runs 5
+python de06.py --toronto data/tor_demo --time 60 --slots 50
+```
+
+`--alg` nhận: `wp`, `dsatur`, `exact`, `tabu`, `ls`, `hea`, `all`.
+File lời giải: dòng 1 là số màu k, dòng 2 là c(1), …, c(n).
+
+## Trang web trực quan hoá
+
+```
+python de06.py --web
+```
+
+Lệnh này mở `http://127.0.0.1:5500/visualize/index.html`. Trang có: đồ thị đổi màu theo thời gian thực, đường hội tụ số màu, bảng đối chiếu thuật toán và validator. Danh sách đồ thị có sẵn các file `.col` trong `data/`. Cũng có thể mở file `.col` bất kỳ bằng nút chọn file.
+
+Có thể bấm đúp `visualize/index.html` để mở trực tiếp (khi đó chỉ dùng được các đồ thị mẫu sinh sẵn và chọn file `.col` thủ công, không tự đọc được `data/`).

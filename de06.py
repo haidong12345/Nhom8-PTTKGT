@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+de06.py - Đề 6: Xếp lịch thi = bài toán tô màu đồ thị (min số màu, sắc số chi(G)).
+Xem README.md để biết thuật toán và cách chạy.
+  python de06.py --web      # mở trang web trực quan hoá
+"""
 import sys
 import time
 import random
@@ -707,6 +712,31 @@ def selftest(tlimit, runs, directory="."):
     run_toronto(os.path.join(directory, "tor_demo"), tlimit, 0)
 
 
+def serve_web(port=5500):
+    """Chạy máy chủ cục bộ và mở trang trực quan hoá (thư mục visualize/)."""
+    import os
+    import http.server
+    import socketserver
+    import threading
+    import webbrowser
+    root = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(root)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    socketserver.TCPServer.allow_reuse_address = True
+    url = "http://127.0.0.1:%d/visualize/index.html" % port
+    with socketserver.TCPServer(("127.0.0.1", port), Handler) as httpd:
+        print("Trang trực quan hoá: %s  (nhấn Ctrl+C để dừng)" % url)
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nĐã dừng máy chủ.")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Đề 6 - tô màu đồ thị / xếp lịch thi")
     ap.add_argument("file", nargs="?", help="file DIMACS .col")
@@ -717,10 +747,14 @@ def main():
     ap.add_argument("--toronto", help="tiền tố bộ Toronto (đọc PREFIX.crs và PREFIX.stu)")
     ap.add_argument("--slots", type=int, default=0, help="số ca thi T (Toronto); 0 = 1.5 x k_min")
     ap.add_argument("--gen-toronto", metavar="PREFIX", help="sinh bộ dữ liệu giả lập dạng Toronto")
+    ap.add_argument("--web", action="store_true", help="mở trang web trực quan hoá (visualize/index.html)")
+    ap.add_argument("--port", type=int, default=5500, help="cổng cho --web")
     ap.add_argument("--selftest", action="store_true", help="sinh bộ test (myciel, queen, gnp) và chạy")
     ap.add_argument("--dir", default="data", help="thư mục chứa file sinh ra khi --selftest")
     a = ap.parse_args()
-    if a.gen_toronto:
+    if a.web:
+        serve_web(a.port)
+    elif a.gen_toronto:
         gen_toronto(a.gen_toronto)
         print("đã sinh %s.crs và %s.stu" % (a.gen_toronto, a.gen_toronto))
     elif a.toronto:

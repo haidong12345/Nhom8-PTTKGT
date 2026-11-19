@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trực quan hóa tô màu đồ thị – Đề 6</title>
+<style>
+:root{--bg:#f3f5f9;--pn:#fff;--tx:#1b2433;--mu:#5d6b82;--bd:#d5dbe6;--ac:#1f6feb;--ok:#168a4a;--er:#d1332e;--cv:#f8fafd;--ed:rgba(60,80,120,.28);
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1524;--pn:#14203a;--tx:#e6edf9;--mu:#8fa0bf;--bd:#27385c;--ac:#4aa3ff;--ok:#4cd68a;--er:#ff6b66;--cv:#0b1220;--ed:rgba(150,180,230,.3);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1524;--pn:#14203a;--tx:#e6edf9;--mu:#8fa0bf;--bd:#27385c;--ac:#4aa3ff;--ok:#4cd68a;--er:#ff6b66;--cv:#0b1220;--ed:rgba(150,180,230,.3);color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:12px}
+h1{font-size:18px;margin:0 0 10px;color:var(--ac)}
+h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mu);margin:14px 0 6px}
+h2:first-child{margin-top:0}
+.grid{display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:1000px){.grid{grid-template-columns:270px minmax(0,1fr) 340px}}
+.panel{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:12px;min-width:0}
+label{display:block;font-size:12px;color:var(--mu);margin:6px 0 2px}
+select,input,button{width:100%;font:inherit;color:var(--tx);background:var(--cv);border:1px solid var(--bd);border-radius:6px;padding:6px 8px}
+.row{display:flex;gap:6px}.row>*{flex:1;min-width:0}
+button{cursor:pointer;background:var(--ac);color:#fff;border:0;font-weight:600;margin-top:8px}
+button.sec{background:var(--cv);color:var(--tx);border:1px solid var(--bd)}
+button.dg{background:var(--er)}
+button:disabled{opacity:.5;cursor:default}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.st{background:var(--cv);border:1px solid var(--bd);border-radius:8px;padding:6px 8px}
+.st b{display:block;font-size:18px}.st span{font-size:11px;color:var(--mu)}
+canvas{width:100%;display:block;background:var(--cv);border:1px solid var(--bd);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:4px 6px;border-bottom:1px solid var(--bd);text-align:left}
+th{color:var(--mu);font-weight:600}
+.wrap{overflow-x:auto}
+#log{font:11.5px/1.5 ui-monospace,Consolas,monospace;background:var(--cv);border:1px solid var(--bd);border-radius:8px;padding:8px;height:130px;overflow:auto;white-space:pre-wrap}
+.ok{color:var(--ok)}.er{color:var(--er)}
+#msg{font-size:12px;color:var(--mu);min-height:18px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>Trực quan hóa bài toán tô màu đồ thị – xếp lịch thi</h1>
+<div class="grid">
+<section class="panel">
+  <h2>1. Bộ dữ liệu</h2>
+  <label>Đồ thị mẫu</label>
+  <select id="inst">
+    <option value="vidu">Ví dụ nhỏ trong đề (7 đỉnh)</option>
+    <option value="myciel3">myciel3 (χ = 4)</option>
+    <option value="myciel4">myciel4 (χ = 5)</option>
+    <option value="myciel5">myciel5 (χ = 6)</option>
+    <option value="queen5">queen5_5 (χ = 5)</option>
+    <option value="queen6">queen6_6 (χ = 7)</option>
+    <option value="queen8" selected>queen8_8 (χ = 9)</option>
+    <option value="gnp">Ngẫu nhiên G(n, p)</option>
+  </select>
+  <div class="row"><div><label>n</label><input id="gn" type="number" value="60" min="5" max="200"></div>
+  <div><label>p</label><input id="gp" type="number" value="0.3" step="0.05" min="0.02" max="0.9"></div>
+  <div><label>seed</label><input id="gs" type="number" value="1"></div></div>
+  <button id="load">Tải / sinh lại dữ liệu</button>
+  <label>Hoặc mở file DIMACS (.col)</label>
+  <input id="file" type="file" accept=".col,.txt">
+  <h2>2. Chọn thuật toán</h2>
+  <select id="alg">
+    <option value="wp">Welsh–Powell</option>
+    <option value="dsatur">DSATUR</option>
+    <option value="tabu" selected>TabuCol (giảm dần k)</option>
+    <option value="hea">GA lai HEA (GPX + TabuCol)</option>
+  </select>
+  <label>Ngân sách thời gian (giây)</label>
+  <input id="lim" type="number" value="5" min="1" max="120">
+  <button id="run">▶ Chạy trực quan</button>
+  <button id="stop" class="dg" disabled>■ Dừng</button>
+  <button id="all" class="sec">Chạy so sánh cả 4 thuật toán</button>
+  <div id="msg"></div>
+</section>
+
+<section class="panel">
+  <h2>Bản đồ đồ thị – mỗi màu là một ca thi</h2>
+  <div class="stats">
+    <div class="st"><span>Số đỉnh / cạnh</span><b id="s1">–</b></div>
+    <div class="st"><span>Cận dưới ω (clique)</span><b id="s2">–</b></div>
+    <div class="st"><span>Số màu hiện tại</span><b id="s3">–</b></div>
+    <div class="st"><span>Xung đột (kiểm tra)</span><b id="s4">–</b></div>
+    <div class="st"><span>Thời gian</span><b id="s5">0.0 s</b></div>
+    <div class="st"><span>Trạng thái</span><b id="s6" style="font-size:13px">sẵn sàng</b></div>
+  </div>
+  <canvas id="g"></canvas>
+</section>
+
+<section class="panel">
+  <h2>Đường hội tụ: số màu theo thời gian</h2>
+  <canvas id="c"></canvas>
+  <h2>Bảng đối chiếu kết quả</h2>
+  <div class="wrap"><table><thead><tr><th>Thuật toán</th><th>k</th><th>Xung đột</th><th>Thời gian</th><th>Nhận xét</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <h2>3. Kiểm tra tính hợp lệ (validator)</h2>
+  <div id="log"></div>
+</section>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const now=()=>performance.now();
+function mk(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+/* ---------- Dữ liệu ---------- */
+function build(n,edges,name,grid){
+  const seen=new Set(),E=[],adj=Array.from({length:n},()=>[]);
+  for(const[a,b]of edges){if(a===b)continue;const u=Math.min(a,b),v=Math.max(a,b),k=u*n+v;if(seen.has(k))continue;seen.add(k);E.push([u,v]);adj[u].push(v);adj[v].push(u)}
+  const G={n,edges:E,adj,name,grid:!!grid,pos:null};
+  if(grid)G.pos=grid;else layout(G);
+  G.lb=clique(G);return G;
+}
+function myciel(k){let n=2,e=[[0,1]];for(let r=1;r<k;r++){const ne=e.slice();for(const[i,j]of e)ne.push([i,n+j],[j,n+i]);for(let i=0;i<n;i++)ne.push([n+i,2*n]);n=2*n+1;e=ne}return[n,e]}
+function queen(r){const e=[],pos=[];for(let i=0;i<r*r;i++){pos.push([(i%r+.5)/r,(Math.floor(i/r)+.5)/r]);for(let j=i+1;j<r*r;j++){const a=Math.floor(i/r),b=i%r,c=Math.floor(j/r),d=j%r;if(a===c||b===d||Math.abs(a-c)===Math.abs(b-d))e.push([i,j])}}return[r*r,e,pos]}
+function makeInstance(key){
+  if(key==="vidu"){const e=[[1,2],[1,3],[1,4],[2,3],[2,5],[3,6],[4,5],[4,7],[5,6],[5,7],[6,7]].map(([a,b])=>[a-1,b-1]);return build(7,e,"vidu")}
+  if(key.startsWith("myciel")){const[n,e]=myciel(+key.slice(6));return build(n,e,key)}
+  if(key.startsWith("queen")){const r=+key.slice(5),[n,e,p]=queen(r);return build(n,e,"queen"+r+"_"+r,p)}
+  const n=+$("gn").value,p=+$("gp").value,rg=mk(+$("gs").value),e=[];
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)if(rg()<p)e.push([i,j]);
+  return build(n,e,"G("+n+", "+p+")");
+}
+function parseDimacs(t,name){let n=0;const e=[];for(const l of t.split(/\r?\n/)){const w=l.trim().split(/\s+/);if(w[0]==="p")n=+w[2];else if(w[0]==="e")e.push([+w[1]-1,+w[2]-1])}if(!n)throw new Error("thiếu dòng p edge n m");return build(n,e,name||"file .col")}
+function layout(G){ // Fruchterman–Reingold
+  const n=G.n,x=new Float64Array(n),y=new Float64Array(n),r=mk(7);
+  for(let i=0;i<n;i++){const a=2*Math.PI*i/n;x[i]=.5+.4*Math.cos(a)+(r()-.5)*.02;y[i]=.5+.4*Math.sin(a)+(r()-.5)*.02}
+  const k=Math.sqrt(1/n),it=n>150?80:220;let temp=.1;
+  for(let s=0;s<it;s++){const dx=new Float64Array(n),dy=new Float64Array(n);
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){let ex=x[i]-x[j],ey=y[i]-y[j],d=Math.hypot(ex,ey)||1e-3,f=k*k/d;ex/=d;ey/=d;dx[i]+=ex*f;dy[i]+=ey*f;dx[j]-=ex*f;dy[j]-=ey*f}
+    for(const[u,v]of G.edges){let ex=x[u]-x[v],ey=y[u]-y[v],d=Math.hypot(ex,ey)||1e-3,f=d*d/k;ex/=d;ey/=d;dx[u]-=ex*f;dy[u]-=ey*f;dx[v]+=ex*f;dy[v]+=ey*f}
+    for(let i=0;i<n;i++){const d=Math.hypot(dx[i],dy[i])||1e-3,m=Math.min(d,temp);x[i]+=dx[i]/d*m;y[i]+=dy[i]/d*m}
+    temp*=.97}
+  const mnx=Math.min(...x),mxx=Math.max(...x),mny=Math.min(...y),mxy=Math.max(...y);
+  G.pos=Array.from({length:n},(_,i)=>[.04+.92*(x[i]-mnx)/(mxx-mnx||1),.04+.92*(y[i]-mny)/(mxy-mny||1)]);
+}
+function clique(G){ // cận dưới ω: clique tham lam
+  let best=1;const idx=[...Array(G.n).keys()].sort((a,b)=>G.adj[b].length-G.adj[a].length);
+  for(const s of idx.slice(0,60)){let cand=new Set(G.adj[s]),sz=1;while(cand.size){let bv=-1,bc=-1;for(const v of cand){let c=0;for(const w of G.adj[v])if(cand.has(w))c++;if(c>bc){bc=c;bv=v}}sz++;const nb=new Set(G.adj[bv]);cand=new Set([...cand].filter(x=>nb.has(x)))}best=Math.max(best,sz)}
+  return best;
+}
+
+/* ---------- Thuật toán ---------- */
+const norm=c=>{const m=new Map();return c.map(v=>{if(!m.has(v))m.set(v,m.size);return m.get(v)})};
+const ncol=c=>new Set(c).size;
+function welsh(adj){const n=adj.length,o=[...Array(n).keys()].sort((a,b)=>adj[b].length-adj[a].length),col=Array(n).fill(-1);let c=0,left=n;
+  while(left){const cls=[];for(const v of o)if(col[v]<0&&!cls.some(w=>adj[v].includes(w))){col[v]=c;cls.push(v);left--}c++}return col}
+function dsatur(adj){const n=adj.length,col=Array(n).fill(-1),sat=Array.from({length:n},()=>new Set());
+  for(let s=0;s<n;s++){let v=-1;for(let u=0;u<n;u++)if(col[u]<0&&(v<0||sat[u].size>sat[v].size||(sat[u].size===sat[v].size&&adj[u].length>adj[v].length)))v=u;
+    let c=0;while(sat[v].has(c))c++;col[v]=c;for(const w of adj[v])sat[w].add(c)}return col}
+function* tabu(adj,k,init,dl,rng,maxIt){ // TabuCol, bảng delta g[v*k+c] cập nhật O(bậc)
+  const n=adj.length,col=init?init.slice():Array.from({length:n},()=>rng()*k|0),g=new Int32Array(n*k),tb=new Int32Array(n*k);
+  for(let u=0;u<n;u++)for(const v of adj[u])g[u*k+col[v]]++;
+  let f=0;for(let u=0;u<n;u++)f+=g[u*k+col[u]];f/=2;
+  let best=f,bc=col.slice();
+  for(let it=1;it<=maxIt&&f>0;it++){
+    let bd=1e9,bu=-1,bk=-1,nt=0,nconf=0;
+    for(let u=0;u<n;u++){const a=col[u],ga=g[u*k+a];if(!ga)continue;nconf++;
+      for(let c=0;c<k;c++){if(c===a)continue;const d=g[u*k+c]-ga;
+        if(tb[u*k+c]>it&&f+d>=best)continue;
+        if(d<bd){bd=d;bu=u;bk=c;nt=1}else if(d===bd&&rng()*(++nt)<1){bu=u;bk=c}}}
+    if(bu<0)continue;
+    const a=col[bu];tb[bu*k+a]=it+(0.6*nconf|0)+(rng()*10|0);col[bu]=bk;f+=bd;
+    for(const w of adj[bu]){g[w*k+a]--;g[w*k+bk]++}
+    if(f<best){best=f;bc=col.slice()}
+    if(it%200===0){if(now()>dl)break;yield{prog:1,k,f:best}}
+  }
+  return{col:bc,f:best};
+}
+function gpx(a,b,k,n,rng){ // Greedy Partition Crossover (Galinier–Hao 1999)
+  const A=Array.from({length:k},()=>new Set()),B=Array.from({length:k},()=>new Set()),ch=Array(n).fill(-1);
+  for(let v=0;v<n;v++){A[a[v]].add(v);B[b[v]].add(v)}
+  const P=[A,B];
+  for(let i=0;i<k;i++){const S=P[i%2];let j=0;for(let c=1;c<k;c++)if(S[c].size>S[j].size)j=c;
+    for(const v of [...S[j]]){ch[v]=i;A[a[v]].delete(v);B[b[v]].delete(v)}}
+  for(let v=0;v<n;v++)if(ch[v]<0)ch[v]=rng()*k|0;
+  return ch;
+}
+function* hea(adj,k,init,dl,rng){
+  const n=adj.length,ls=Math.max(300,3*n),pop=[];
+  for(let i=0;i<8&&now()<dl;i++){const r=yield*tabu(adj,k,i?null:init,dl,rng,ls);if(r.f===0)return r;pop.push(r)}
+  if(pop.length<2)return pop[0];
+  while(now()<dl){
+    const i=rng()*pop.length|0;let j=rng()*pop.length|0;if(j===i)j=(i+1)%pop.length;
+    const r=yield*tabu(adj,k,gpx(pop[i].col,pop[j].col,k,n,rng),dl,rng,ls);
+    if(r.f===0)return r;
+    pop[pop[i].f>=pop[j].f?i:j]=r;
+    yield{prog:1,k,f:Math.min(...pop.map(p=>p.f))};
+  }
+  return pop.reduce((a,b)=>a.f<=b.f?a:b);
+}
+function* minimize(method,lim,rng){ // DSATUR rồi thử k = best-1, best-2, ...
+  const adj=G.adj,t0=now(),dl=t0+lim*1000;
+  let col=norm(dsatur(adj)),k=ncol(col);
+  yield{col,k,t:0};
+  while(k>G.lb&&now()<dl){
+    const k2=k-1,init=col.map(c=>c<k2?c:rng()*k2|0);let r;
+    if(method==="tabu")r=yield*tabu(adj,k2,init,dl,rng,Infinity);else r=yield*hea(adj,k2,init,dl,rng);
+    if(r.f===0){col=norm(r.col);k=k2;yield{col,k,t:now()-t0}}else break;
+  }
+  return{col,k};
+}
+function* simple(fn){const col=norm(fn(G.adj));yield{col,k:ncol(col),t:0};return{col,k:ncol(col)}}
+const NAMES={wp:"Welsh–Powell",dsatur:"DSATUR",tabu:"TabuCol",hea:"HEA (GPX)"};
+function makeGen(a,lim,rng){return a==="wp"?simple(welsh):a==="dsatur"?simple(dsatur):minimize(a,lim,rng)}
+
+/* ---------- Vẽ ---------- */
+let G=null,cur=null,series={},job=null,queue=[];
+const COL=["#1f6feb","#e5484d","#2fb344","#f5a524","#9b5de5","#00b8d9","#ff7ab6","#8d6e63"];
+const hue=c=>"hsl("+((c*137.5)%360).toFixed(0)+",70%,55%)";
+function fit(cv,h){const d=devicePixelRatio||1,w=cv.clientWidth;cv.width=w*d;cv.height=h(w)*d;cv.style.height=h(w)+"px";const x=cv.getContext("2d");x.setTransform(d,0,0,d,0,0);return[x,w,h(w)]}
+function conflicts(col){let c=0;for(const[u,v]of G.edges)if(col[u]===col[v])c++;return c}
+function draw(){
+  const[x,w,h]=fit($("g"),w=>Math.min(560,Math.round(w*.78)));
+  const sty=getComputedStyle(document.documentElement);x.clearRect(0,0,w,h);
+  const P=G.pos.map(([a,b])=>[a*w,b*h]);
+  x.strokeStyle=sty.getPropertyValue("--ed");x.lineWidth=1;x.beginPath();
+  for(const[u,v]of G.edges){x.moveTo(...P[u]);x.lineTo(...P[v])}x.stroke();
+  const r=Math.max(4,Math.min(14,w/(Math.sqrt(G.n)*3.2)));
+  for(let i=0;i<G.n;i++){const c=cur?cur[i]:-1;x.beginPath();x.arc(P[i][0],P[i][1],r,0,7);x.fillStyle=c<0?"#8893a8":hue(c);x.fill();
+    if(cur&&G.adj[i].some(j=>cur[j]===c)){x.lineWidth=2.5;x.strokeStyle="#d1332e";x.stroke()}
+    if(G.n<=40&&r>8){x.fillStyle="#fff";x.font="600 "+Math.round(r*.9)+"px system-ui";x.textAlign="center";x.textBaseline="middle";x.fillText(i+1,P[i][0],P[i][1]+.5)}}
+}
+function drawChart(){
+  const[x,w,h]=fit($("c"),()=>200);const sty=getComputedStyle(document.documentElement),mu=sty.getPropertyValue("--mu"),bd=sty.getPropertyValue("--bd");
+  x.clearRect(0,0,w,h);const L=34,B=22,T=8,R=8,lim=+$("lim").value;
+  const all=Object.values(series).flat();if(!all.length){x.fillStyle=mu;x.font="12px system-ui";x.fillText("Chưa có dữ liệu – hãy chạy một thuật toán",L,h/2);return}
+  const ymax=Math.max(...all.map(p=>p.k))+1,ymin=Math.max(0,G.lb-1),xs=t=>L+(w-L-R)*Math.min(t/(lim*1000),1),ys=k=>T+(h-T-B)*(ymax-k)/(ymax-ymin||1);
+  x.strokeStyle=bd;x.fillStyle=mu;x.font="11px system-ui";x.textAlign="right";x.textBaseline="middle";
+  for(let k=ymin;k<=ymax;k++){x.beginPath();x.moveTo(L,ys(k));x.lineTo(w-R,ys(k));x.stroke();x.fillText(k,L-5,ys(k))}
+  x.textAlign="center";x.fillText("0",L,h-8);x.fillText(lim+" s",w-R-8,h-8);
+  let i=0;for(const[nm,pts]of Object.entries(series)){x.strokeStyle=COL[i%COL.length];x.lineWidth=2;x.beginPath();
+    pts.forEach((p,j)=>{if(j)x.lineTo(xs(p.t),ys(pts[j-1].k));j?x.lineTo(xs(p.t),ys(p.k)):x.moveTo(xs(p.t),ys(p.k))});
+    const last=pts[pts.length-1];x.lineTo(xs(Math.max(last.t,last.end||last.t)),ys(last.k));x.stroke();
+    x.fillStyle=COL[i%COL.length];x.textAlign="left";x.fillText("■ "+nm,L+6+i*96,T+6);i++}
+}
+
+/* ---------- Chạy ---------- */
+const log=(m,c)=>{const d=document.createElement("div");d.textContent=m;if(c)d.className=c;$("log").appendChild(d);$("log").scrollTop=1e9};
+function setBusy(b){$("run").disabled=b;$("all").disabled=b;$("load").disabled=b;$("stop").disabled=!b}
+function status(t){$("s6").textContent=t}
+function startJob(alg){
+  const lim=Math.max(1,+$("lim").value||5),rng=mk(Date.now()&0xffff);
+  job={alg,lim,t0:now(),gen:makeGen(alg,lim,rng),best:null,stop:false};
+  series[NAMES[alg]]=[];cur=null;setBusy(true);status("đang chạy…");log("▶ Bắt đầu "+NAMES[alg]+" trên "+G.name);tick();
+}
+function tick(){
+  if(!job)return;const t=now();let r;
+  do{r=job.gen.next();if(r.done)break;const e=r.value;
+    if(e.col){job.best=e;cur=e.col;const s=series[NAMES[job.alg]];s.push({t:e.t||now()-job.t0,k:e.k});$("s3").textContent=e.k;$("s4").textContent=conflicts(cur)}
+    else if(e.prog)status("thử k = "+e.k+", xung đột "+e.f);
+  }while(now()-t<12&&!job.stop);
+  $("s5").textContent=((now()-job.t0)/1000).toFixed(1)+" s";draw();drawChart();
+  if(r.done||job.stop){finish(r.done?r.value:job.best)}else setTimeout(tick,0);
+}
+function finish(res){
+  const j=job;job=null;const el=now()-j.t0,col=res.col||j.best.col,k=ncol(col),cf=conflicts(col);
+  const s=series[NAMES[j.alg]];if(s.length)s[s.length-1].end=Math.min(el,j.lim*1000);
+  cur=col;$("s3").textContent=k;$("s4").textContent=cf;$("s5").textContent=(el/1000).toFixed(2)+" s";
+  const note=k===G.lb?"k = ω ⇒ tối ưu":"ω ≤ χ ≤ "+k;
+  const tr=document.createElement("tr");tr.innerHTML="<td>"+NAMES[j.alg]+"</td><td>"+k+"</td><td class='"+(cf?"er":"ok")+"'>"+cf+"</td><td>"+(el/1000).toFixed(2)+" s</td><td>"+note+"</td>";$("tb").appendChild(tr);
+  log((cf?"✗ ":"✓ ")+NAMES[j.alg]+": "+k+" màu, "+cf+" cạnh xung đột"+(cf?" – KHÔNG hợp lệ":" – hợp lệ"),cf?"er":"ok");
+  status(j.stop?"đã dừng":"hoàn tất");draw();drawChart();
+  if(queue.length&&!j.stop)startJob(queue.shift());else{queue=[];setBusy(false)}
+}
+function loadGraph(g){
+  if(job){job.stop=true}queue=[];G=g;cur=null;series={};$("tb").innerHTML="";$("log").innerHTML="";
+  $("s1").textContent=G.n+" / "+G.edges.length;$("s2").textContent="≥ "+G.lb;$("s3").textContent="–";$("s4").textContent="–";$("s5").textContent="0.0 s";status("sẵn sàng");
+  $("msg").textContent="Đã nạp "+G.name+": "+G.n+" đỉnh, "+G.edges.length+" cạnh.";log("Đã nạp "+G.name+" (bỏ cạnh lặp và khuyên). Cận dưới clique ω ≥ "+G.lb+".");
+  setBusy(false);draw();drawChart();
+}
+$("load").onclick=()=>loadGraph(makeInstance($("inst").value));
+$("inst").onchange=()=>{const v=$("inst").value;
+  if(v.startsWith("file:")){const nm=v.slice(5);fetch("../data/"+nm).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.text()}).then(t=>loadGraph(parseDimacs(t,nm))).catch(e=>{$("msg").textContent="Không đọc được data/"+nm+": "+e.message})}
+  else loadGraph(makeInstance(v))};
+// Khi chạy qua máy chủ (python de06.py --web), liệt kê các file .col trong thư mục data/ của dự án
+fetch("../data/").then(r=>r.ok?r.text():"").then(t=>{
+  const names=[...new Set([...t.matchAll(/href="([^"]+\.col)"/g)].map(m=>decodeURIComponent(m[1]).split("/").pop()))];
+  if(!names.length)return;const g=document.createElement("optgroup");g.label="File trong thư mục data/";
+  for(const n of names){const o=document.createElement("option");o.value="file:"+n;o.textContent=n;g.appendChild(o)}
+  $("inst").appendChild(g);$("msg").textContent="Đã tìm thấy "+names.length+" file .col trong data/ (chọn ở danh sách đồ thị)."
+}).catch(()=>{});
+$("file").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{loadGraph(parseDimacs(r.result))}catch(err){$("msg").textContent="Lỗi đọc file: "+err.message}};r.readAsText(f)};
+$("run").onclick=()=>{series={};startJob($("alg").value)};
+$("stop").onclick=()=>{if(job)job.stop=true;queue=[]};
+$("all").onclick=()=>{series={};$("tb").innerHTML="";queue=["dsatur","tabu","hea"];startJob("wp")};
+addEventListener("resize",()=>{if(G){draw();drawChart()}});
+loadGraph(makeInstance("queen8"));
+</script>
+</body>
+</html>
