@@ -7,6 +7,7 @@ import argparse
 import statistics
 
 sys.setrecursionlimit(20000)
+
 def read_dimacs(path):
     """Trả về (n, adj, info). adj[u] là tập láng giềng (đỉnh đánh số từ 0)."""
     n = None
@@ -66,7 +67,6 @@ def normalize(col):
     """Đánh số lại màu 0..k-1 liên tục."""
     mp = {}
     return [mp.setdefault(c, len(mp)) for c in col]
-
 
 def clique_lower_bound(adj, tries=300, seed=0):
     rng = random.Random(seed)
@@ -241,6 +241,7 @@ def tabucol(adj, k, init=None, tlimit=10.0, max_iter=10 ** 9, rng=None):
     st = State(adj, k, start)
     tabu = [[0] * k for _ in range(n)]
     best_f = st.f
+    best_col = list(st.col)
     it = 0
     t0 = time.time()
     while st.f > 0 and it < max_iter:
@@ -270,7 +271,8 @@ def tabucol(adj, k, init=None, tlimit=10.0, max_iter=10 ** 9, rng=None):
         st.move(u, c)
         if st.f < best_f:
             best_f = st.f
-    return st.col, st.f, it
+            best_col = list(st.col)
+    return best_col, best_f, it
 
 def local_search(adj, k, init=None, tlimit=10.0, noise=0.03, swaps=12, rng=None):
     rng = rng or random.Random()
@@ -308,6 +310,84 @@ def local_search(adj, k, init=None, tlimit=10.0, noise=0.03, swaps=12, rng=None)
                 st.move(b, ca)
     return st.col, st.f, it
 
+def gpx(p1, p2, k, rng):
+    """Greedy Partition Crossover: lần lượt lấy lớp màu LỚN NHẤT của cha/mẹ (xen kẽ),
+    gán thành một lớp của con, rồi xoá các đỉnh đó khỏi cả hai bố mẹ.
+    Đỉnh còn sót được gán màu ngẫu nhiên."""
+    n = len(p1)
+    A = [set() for _ in range(k)]
+    B = [set() for _ in range(k)]
+    for v in range(n):
+        A[p1[v]].add(v)
+        B[p2[v]].add(v)
+    parents = (A, B)
+    child = [-1] * n
+    for i in range(k):
+        P = parents[i % 2]
+        j = max(range(k), key=lambda c: len(P[c]))
+        cls = list(P[j])
+        for v in cls:
+            child[v] = i
+            A[p1[v]].discard(v)
+            B[p2[v]].discard(v)
+    for v in range(n):
+        if child[v] < 0:
+            child[v] = rng.randrange(k)
+    return child
+
+
+def hea(adj, k, init=None, tlimit=10.0, pop_size=10, ls_iters=None, rng=None):
+    """Hybrid Evolutionary Algorithm cho k màu cố định.
+    Mỗi thế hệ: chọn 2 cha mẹ ngẫu nhiên -> GPX -> TabuCol ngắn (ls_iters bước) ->
+    con thay cha/mẹ tệ hơn. Nếu quần thể đình trệ thì khởi tạo lại nửa tệ nhất.
+    Trả về (col, f, số thế hệ)."""
+    rng = rng or random.Random()
+    n = len(adj)
+    t0 = time.time()
+    ls_iters = ls_iters or max(300, 3 * n)
+    left = lambda: tlimit - (time.time() - t0)
+
+    def make(start):
+        return tabucol(adj, k, start, tlimit=max(left(), 0.01), max_iter=ls_iters, rng=rng)[:2]
+
+    pop = []
+    for i in range(pop_size):
+        if left() <= 0 and pop:
+            break
+        start = shrink_coloring(init, k, rng) if (i == 0 and init is not None) else None
+        col, f = make(start)
+        if f == 0:
+            return col, 0, 0
+        pop.append((f, col))
+    if len(pop) < 2:
+        c, f = pop[0][1], pop[0][0]
+        return c, f, 0
+    best_f = min(f for f, _ in pop)
+    gen = last_imp = 0
+    while left() > 0:
+        gen += 1
+        i, j = rng.sample(range(len(pop)), 2)
+        child = gpx(pop[i][1], pop[j][1], k, rng)
+        col, f = make(child)
+        if f == 0:
+            return col, 0, gen
+        worse = i if pop[i][0] >= pop[j][0] else j
+        pop[worse] = (f, col)
+        if f < best_f:
+            best_f, last_imp = f, gen
+        if gen - last_imp > 40 * pop_size:       # đình trệ: làm mới nửa tệ nhất
+            pop.sort(key=lambda x: x[0])
+            for t in range(len(pop) // 2, len(pop)):
+                if left() <= 0:
+                    break
+                col, f = make(None)
+                if f == 0:
+                    return col, 0, gen
+                pop[t] = (f, col)
+            last_imp = gen
+    f, col = min(pop, key=lambda x: x[0])
+    return col, f, gen
+
 def minimize_colors(adj, tlimit, seed=0, method="tabu", lb=0):
     """DSATUR -> thử k = best-1, best-2, ... bằng TabuCol/LS đến hết thời gian."""
     rng = random.Random(seed)
@@ -323,6 +403,8 @@ def minimize_colors(adj, tlimit, seed=0, method="tabu", lb=0):
         init = shrink_coloring(col, k, rng)
         if method == "tabu":
             new, f, _ = tabucol(adj, k, init, tlimit=left, rng=rng)
+        elif method == "hea":
+            new, f, _ = hea(adj, k, init, tlimit=left, rng=rng)
         else:
             new, f, _ = local_search(adj, k, init, tlimit=left, rng=rng)
         if f == 0:
@@ -331,6 +413,201 @@ def minimize_colors(adj, tlimit, seed=0, method="tabu", lb=0):
         else:
             break
     return col, best, t_best
+
+def _open_any(prefix, ext):
+    import os
+    for e in (ext, ext.upper()):
+        p = prefix + e
+        if os.path.exists(p):
+            return open(p, encoding="utf-8", errors="ignore")
+    raise FileNotFoundError(prefix + ext)
+
+
+def read_toronto(prefix):
+    """.crs: mỗi dòng "mã_môn  số_sinh_viên"; .stu: mỗi dòng = danh sách môn của 1 sinh viên.
+    Hai môn xuất hiện trên cùng một dòng .stu được nối cạnh.
+    Trả về (n, adj, nbw, S, info); nbw[i][j] = số sinh viên chung của môn i và j."""
+    for e in (".crs", ".stu", ".CRS", ".STU"):
+        if prefix.endswith(e):
+            prefix = prefix[:-len(e)]
+    courses, idx = [], {}
+    with _open_any(prefix, ".crs") as f:
+        for line in f:
+            t = line.split()
+            if t and t[0] not in idx:
+                idx[t[0]] = len(courses)
+                courses.append(t[0])
+    students = []
+    with _open_any(prefix, ".stu") as f:
+        for line in f:
+            t = line.split()
+            if not t:
+                continue
+            ids = []
+            for c in dict.fromkeys(t):          # bỏ môn lặp, giữ thứ tự
+                if c not in idx:
+                    idx[c] = len(courses)
+                    courses.append(c)
+                ids.append(idx[c])
+            students.append(ids)
+    n = len(courses)
+    nbw = [dict() for _ in range(n)]
+    for ids in students:
+        for a in range(len(ids)):
+            for b in range(a + 1, len(ids)):
+                i, j = ids[a], ids[b]
+                nbw[i][j] = nbw[i].get(j, 0) + 1
+                nbw[j][i] = nbw[j].get(i, 0) + 1
+    adj = [set(d.keys()) for d in nbw]
+    m = sum(len(a) for a in adj) // 2
+    info = dict(n=n, m=m, S=len(students), courses=courses,
+                density=(2.0 * m / (n * (n - 1)) if n > 1 else 0.0))
+    return n, adj, nbw, len(students), info
+
+
+def pen(d):
+    """Phạt Carter: hai kỳ thi của cùng sinh viên cách d ca (1<=d<=5) bị phạt 2^(5-d)."""
+    return (1 << (5 - d)) if 1 <= d <= 5 else 0
+
+
+def proximity_cost(nbw, slot, S):
+    """Chi phí mềm trung bình trên mỗi sinh viên (hàm mục tiêu chuẩn của bộ Toronto)."""
+    tot = 0
+    for i, d in enumerate(nbw):
+        for j, w in d.items():
+            if i < j:
+                tot += w * pen(abs(slot[i] - slot[j]))
+    return tot / float(S)
+
+
+def order_slots(nbw, col, T, rng, restarts=8):
+    """Sắp thứ tự các lớp màu vào T ca thi để giảm chi phí mềm (leo đồi hoán đổi vị trí)."""
+    k = max(col) + 1
+    A = {}
+    for i, d in enumerate(nbw):
+        for j, w in d.items():
+            if i < j and col[i] != col[j]:
+                key = (min(col[i], col[j]), max(col[i], col[j]))
+                A[key] = A.get(key, 0) + w
+    pairs = list(A.items())
+
+    def cost(perm):
+        return sum(w * pen(abs(perm[a] - perm[b])) for (a, b), w in pairs)
+
+    best_perm, best_c = None, None
+    for r in range(restarts):
+        perm = list(range(T))
+        if r:
+            rng.shuffle(perm)
+        c = cost(perm)
+        improved = True
+        while improved:
+            improved = False
+            for x in range(T):
+                for y in range(x + 1, T):
+                    perm[x], perm[y] = perm[y], perm[x]
+                    c2 = cost(perm)
+                    if c2 < c:
+                        c, improved = c2, True
+                    else:
+                        perm[x], perm[y] = perm[y], perm[x]
+        if best_c is None or c < best_c:
+            best_perm, best_c = perm[:], c
+    return [best_perm[c] for c in col]
+
+
+def optimize_proximity(adj, nbw, col, T, S, tlimit, rng):
+    """Cho lịch khả thi (<=T ca): ủ mô phỏng (SA) dời từng môn sang ca khác, vẫn giữ khả thi,
+    để giảm chi phí khoảng cách (Carter). Trả về (slot, cost_sau_sắp_ca, cost_cuối)."""
+    n = len(adj)
+    col = normalize(col)
+    slot = order_slots(nbw, col, T, rng)
+    c_ordered = proximity_cost(nbw, slot, S)
+    g = [[0] * T for _ in range(n)]
+    for v in range(n):
+        for w in adj[v]:
+            g[v][slot[w]] += 1
+    cost = c_ordered * S
+    best, best_slot = cost, slot[:]
+    t0 = time.time()
+    T0, T1 = 8.0, 0.15
+    import math
+    temp = T0
+    while True:
+        el = time.time() - t0
+        if el > tlimit:
+            break
+        temp = T0 * (T1 / T0) ** (el / tlimit)
+        for _ in range(500):
+            v = rng.randrange(n)
+            b = rng.randrange(T)
+            a = slot[v]
+            if b == a or g[v][b] > 0:
+                continue
+            d = 0
+            for u, w in nbw[v].items():
+                su = slot[u]
+                d += w * (pen(abs(b - su)) - pen(abs(a - su)))
+            if d <= 0 or rng.random() < math.exp(-d / temp):
+                slot[v] = b
+                for u in adj[v]:
+                    g[u][a] -= 1
+                    g[u][b] += 1
+                cost += d
+        if cost < best:
+            best, best_slot = cost, slot[:]
+    return best_slot, c_ordered, best / float(S)
+
+
+def gen_toronto(prefix, n_courses=120, n_students=1200, seed=1):
+    """Sinh bộ dữ liệu dạng Toronto (để thử khi chưa có file thật)."""
+    rng = random.Random(seed)
+    w = [1.0 / (i + 1) ** 0.6 for i in range(n_courses)]
+    stu, size = [], [0] * n_courses
+    for _ in range(n_students):
+        k = rng.randint(3, 7)
+        cs = set()
+        while len(cs) < k:
+            cs.add(rng.choices(range(n_courses), weights=w)[0])
+        stu.append(sorted(cs))
+        for c in cs:
+            size[c] += 1
+    with open(prefix + ".crs", "w") as f:
+        for c in range(n_courses):
+            f.write("%04d %d\n" % (c + 1, size[c]))
+    with open(prefix + ".stu", "w") as f:
+        for cs in stu:
+            f.write(" ".join("%04d" % (c + 1) for c in cs) + "\n")
+
+
+def run_toronto(prefix, tlimit, slots, method="hea", seed=0, out=None):
+    n, adj, nbw, S, info = read_toronto(prefix)
+    print("== Toronto %s : %d môn, %d sinh viên, %d cặp môn xung đột (mật độ %.3f)"
+          % (prefix, n, S, info["m"], info["density"]))
+    lb = len(clique_lower_bound(adj))
+    t0 = time.time()
+    col, k, _ = minimize_colors(adj, tlimit, seed=seed, method=method, lb=lb)
+    conf, k = check(adj, col)
+    assert conf == 0
+    print("   cận dưới clique >= %d ; số ca thi tối thiểu tìm được k = %d (%s, %.1fs)"
+          % (lb, k, method, time.time() - t0))
+    T = slots if slots and slots >= k else int(-(-3 * k // 2))
+    print("   số ca thi cho phép T = %d" % T)
+    col = normalize(col)
+    rng = random.Random(seed)
+    slot_naive = list(col)                       # nhãn màu tuỳ ý làm thứ tự ca
+    c0 = proximity_cost(nbw, slot_naive, S)
+    slot, c1, c2 = optimize_proximity(adj, nbw, col, T, S, tlimit, rng)
+    assert check(adj, slot)[0] == 0 and max(slot) < T
+    assert abs(proximity_cost(nbw, slot, S) - c2) < 1e-6
+    print("   chi phí khoảng cách / sinh viên: ban đầu (thứ tự ca tuỳ ý) = %.3f"
+          " ; sau sắp ca = %.3f ; sau SA = %.3f" % (c0, c1, c2))
+    if out:
+        with open(out, "w") as f:
+            for i, c in enumerate(info["courses"]):
+                f.write("%s %d\n" % (c, slot[i] + 1))
+        print("   đã ghi lịch thi (mã môn, ca) vào %s" % out)
+    return slot
 
 def gen_myciel(k):
     """myciel_k theo DIMACS: áp dụng Mycielski (k-1) lần lên K2. myciel3: 11 đỉnh, chi=4."""
@@ -388,7 +665,7 @@ def run_file(path, algs, tlimit, runs, out=None, quiet=False):
                "(%s, %d nút)" % ("TỐI ƯU chứng minh được" if proven else "hết giờ - chưa chứng minh", nodes))
         if proven:
             print("   => chi(G) = %d" % k)
-    for name, method in (("tabu", "tabu"), ("ls", "ls")):
+    for name, method in (("tabu", "tabu"), ("ls", "ls"), ("hea", "hea")):
         if name in algs or "all" in algs:
             ks, ts, t0 = [], [], time.time()
             for r in range(runs):
@@ -397,7 +674,7 @@ def run_file(path, algs, tlimit, runs, out=None, quiet=False):
                 ks.append(k); ts.append(tb)
                 if best_overall is None or k < len(set(best_overall)):
                     best_overall = normalize(col)
-            label = "TabuCol" if name == "tabu" else "LS(1+swap)"
+            label = {"tabu": "TabuCol", "ls": "LS(1+swap)", "hea": "HEA(GPX)"}[name]
             print("   %-10s best=%d  mean=%.2f  std=%.2f  #đạt best=%d/%d  t_best(tb)=%.2fs"
                   % (label, min(ks), statistics.mean(ks),
                      statistics.pstdev(ks), ks.count(min(ks)), runs, statistics.mean(ts)))
@@ -426,6 +703,8 @@ def selftest(tlimit, runs, directory="."):
                  "gnp125_0.1", "gnp125_0.5"]:
         run_file(os.path.join(directory, name + ".col"), ["all"], tlimit, runs)
         print()
+    gen_toronto(os.path.join(directory, "tor_demo"))
+    run_toronto(os.path.join(directory, "tor_demo"), tlimit, 0)
 
 
 def main():
@@ -435,10 +714,19 @@ def main():
     ap.add_argument("--time", type=float, default=30.0, help="ngân sách thời gian (giây) mỗi lần chạy")
     ap.add_argument("--runs", type=int, default=5, help="số lần chạy với seed khác nhau")
     ap.add_argument("--out", help="ghi lời giải tốt nhất ra file")
+    ap.add_argument("--toronto", help="tiền tố bộ Toronto (đọc PREFIX.crs và PREFIX.stu)")
+    ap.add_argument("--slots", type=int, default=0, help="số ca thi T (Toronto); 0 = 1.5 x k_min")
+    ap.add_argument("--gen-toronto", metavar="PREFIX", help="sinh bộ dữ liệu giả lập dạng Toronto")
     ap.add_argument("--selftest", action="store_true", help="sinh bộ test (myciel, queen, gnp) và chạy")
     ap.add_argument("--dir", default="data", help="thư mục chứa file sinh ra khi --selftest")
     a = ap.parse_args()
-    if a.selftest:
+    if a.gen_toronto:
+        gen_toronto(a.gen_toronto)
+        print("đã sinh %s.crs và %s.stu" % (a.gen_toronto, a.gen_toronto))
+    elif a.toronto:
+        m = "hea" if "hea" in a.alg or a.alg == "all" else ("tabu" if "tabu" in a.alg else "hea")
+        run_toronto(a.toronto, a.time, a.slots, method=m, out=(a.out or a.toronto + ".sol"))
+    elif a.selftest:
         selftest(a.time, a.runs, a.dir)
     elif a.file:
         run_file(a.file, set(a.alg.split(",")), a.time, a.runs, a.out)
