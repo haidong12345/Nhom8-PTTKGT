@@ -65,13 +65,17 @@ th{color:var(--mu);font-weight:600}
     <option value="wp">Welsh–Powell</option>
     <option value="dsatur">DSATUR</option>
     <option value="tabu" selected>TabuCol (giảm dần k)</option>
+    <option value="sa">SA (ủ mô phỏng)</option>
+    <option value="ga">GA (GPX, không TabuCol)</option>
+    <option value="aco">ACO (đàn kiến)</option>
+    <option value="vns">VNS</option>
     <option value="hea">GA lai HEA (GPX + TabuCol)</option>
   </select>
   <label>Ngân sách thời gian (giây)</label>
   <input id="lim" type="number" value="5" min="1" max="120">
   <button id="run">▶ Chạy trực quan</button>
   <button id="stop" class="dg" disabled>■ Dừng</button>
-  <button id="all" class="sec">Chạy so sánh cả 4 thuật toán</button>
+  <button id="all" class="sec">Chạy so sánh cả 8 thuật toán</button>
   <div id="msg"></div>
 </section>
 
@@ -189,19 +193,127 @@ function* hea(adj,k,init,dl,rng){
   }
   return pop.reduce((a,b)=>a.f<=b.f?a:b);
 }
+
+/* ---------- Thuật toán bổ sung: SA, GA, ACO, VNS (cùng quy ước với solvers.py) ---------- */
+function mkS(adj,k,col){const n=adj.length,g=new Int32Array(n*k);for(let u=0;u<n;u++)for(const v of adj[u])g[u*k+col[v]]++;
+  let f=0;for(let u=0;u<n;u++)f+=g[u*k+col[u]];return{col:col.slice(),g,f:f/2}}
+function mv(adj,k,S,u,c){const a=S.col[u];S.f+=S.g[u*k+c]-S.g[u*k+a];S.col[u]=c;for(const w of adj[u]){S.g[w*k+a]--;S.g[w*k+c]++}}
+function other(a,k,rng){const b=rng()*(k-1)|0;return b+(b>=a?1:0)}
+function randCol(n,k,rng){return Array.from({length:n},()=>rng()*k|0)}
+function countConf(edges,col){let c=0;for(const[u,v]of edges)if(col[u]===col[v])c++;return c}
+
+function* sa(adj,k,init,dl,rng){ // p0=0.8, alpha=0.95, 10n bước/mức nhiệt, T_min=0.01
+  const n=adj.length,p0=.8,alpha=.95,mpv=10,tmin=.01;
+  let S=mkS(adj,k,init||randCol(n,k,rng)),best=S.f,bc=S.col.slice();
+  if(!best||k<=1)return{col:bc,f:best};
+  const pos=[];for(let i=0;i<Math.min(256,Math.max(32,n));i++){const u=rng()*n|0,c=other(S.col[u],k,rng),d=S.g[u*k+c]-S.g[u*k+S.col[u]];if(d>0)pos.push(d)}
+  const t0=pos.length?-(pos.reduce((a,b)=>a+b,0)/pos.length)/Math.log(p0):1;let T=t0,cnt=0;
+  while(best>0&&now()<dl){
+    for(let s=0;s<Math.max(1,mpv*n);s++){
+      if((++cnt&1023)===0){if(now()>dl)break;yield{prog:1,k,f:best}}
+      const u=rng()*n|0,c=other(S.col[u],k,rng),d=S.g[u*k+c]-S.g[u*k+S.col[u]];
+      if(d<=0||rng()<Math.exp(-d/T)){mv(adj,k,S,u,c);if(S.f<best){best=S.f;bc=S.col.slice();if(!best)return{col:bc,f:0}}}
+    }
+    T*=alpha;if(T<tmin&&now()<dl){S=mkS(adj,k,bc);T=t0}
+  }
+  return{col:bc,f:best};
+}
+
+function tourn(pop,t,rng){let b=pop[rng()*pop.length|0];for(let i=1;i<t;i++){const c=pop[rng()*pop.length|0];if(c.f<b.f)b=c}return b}
+function* ga(adj,k,init,dl,rng){ // quần thể 20, đấu giải 3, elite 1, đột biến 1/n, GPX; KHÔNG có TabuCol
+  const n=adj.length,P=20,T=3,E=1,pm=Math.min(1,1/n),edges=[];
+  for(let u=0;u<n;u++)for(const v of adj[u])if(u<v)edges.push([u,v]);
+  const mk1=c=>({col:c,f:countConf(edges,c)});
+  let pop=[mk1(init?init.slice():randCol(n,k,rng))];
+  while(pop.length<P&&now()<dl)pop.push(mk1(randCol(n,k,rng)));
+  let best=pop.reduce((a,b)=>a.f<=b.f?a:b);if(!best.f||k<=1)return best;
+  while(best.f>0&&now()<dl&&pop.length===P){
+    const nxt=pop.slice().sort((a,b)=>a.f-b.f).slice(0,E);
+    while(nxt.length<P&&now()<dl&&best.f>0){
+      const ch=gpx(tourn(pop,T,rng).col,tourn(pop,T,rng).col,k,n,rng);
+      for(let v=0;v<n;v++)if(rng()<pm)ch[v]=other(ch[v],k,rng);
+      const ind=mk1(ch);nxt.push(ind);if(ind.f<best.f)best=ind;
+    }
+    if(nxt.length===P)pop=nxt;
+    yield{prog:1,k,f:best.f};
+  }
+  return best;
+}
+
+function* aco(adj,k,init,dl,rng){ // 20 kiến, alpha=1, beta=2, rho=0.3, Q=1, tau trong [0.01,5]
+  const n=adj.length,A=20,al=1,be=2,rho=.3,Q=1,t0=1,tmin=.01,tmax=5,eps=1e-6,edges=[];
+  for(let u=0;u<n;u++)for(const v of adj[u])if(u<v)edges.push([u,v]);
+  const as=adj.map(a=>new Set(a));
+  let best={col:(init||randCol(n,k,rng)).slice(),f:0};best.f=countConf(edges,best.col);
+  if(!best.f||k<=1)return best;
+  const tau=new Float64Array(n*n).fill(t0);
+  function ant(){
+    const un=new Set(Array.from({length:n},(_,i)=>i)),cnt=new Int32Array(n*k),sat=new Int32Array(n),cls=Array.from({length:k},()=>[]),col=new Array(n).fill(-1);let f=0;
+    while(un.size){
+      if(now()>dl)return null;
+      let v=-1;for(const u of un)if(v<0||sat[u]>sat[v]||(sat[u]===sat[v]&&(adj[u].length>adj[v].length||(adj[u].length===adj[v].length&&u<v))))v=u;
+      un.delete(v);const w=new Array(k);let tot=0;
+      for(let a=0;a<k;a++){let phi=t0;if(cls[a].length){let s=0;for(const u of cls[a])if(!as[v].has(u))s+=tau[v*n+u];phi=eps+s/cls[a].length}
+        w[a]=Math.pow(phi,al)/Math.pow(1+cnt[v*k+a],be);tot+=w[a]}
+      let r=rng()*tot,a=0;while(a<k-1&&r>=w[a]){r-=w[a];a++}
+      f+=cnt[v*k+a];col[v]=a;cls[a].push(v);
+      for(const u of adj[v])if(un.has(u)){if(cnt[u*k+a]===0)sat[u]++;cnt[u*k+a]++}
+    }
+    return{col,f};
+  }
+  while(best.f>0&&now()<dl){
+    let rb=null;
+    for(let i=0;i<A;i++){const a=ant();if(!a)break;if(!rb||a.f<rb.f)rb=a;if(a.f<best.f){best=a;if(!a.f)return best}yield{prog:1,k,f:best.f}}
+    if(!rb||now()>=dl)break;
+    const dep=Q/(1+rb.f);
+    for(let u=0;u<n;u++)for(let v=u+1;v<n;v++){const x=Math.min(tmax,Math.max(tmin,(1-rho)*tau[u*n+v]+(rb.col[u]===rb.col[v]?dep:0)));tau[u*n+v]=tau[v*n+u]=x}
+  }
+  return best;
+}
+
+function* vns(adj,k,init,dl,rng){ // s_max=4, ngân sách VND = n bước cải thiện; lân cận 1: đổi màu, 2: hoán đổi
+  const n=adj.length,as=adj.map(a=>new Set(a)),smax=4;
+  const S0=mkS(adj,k,init||randCol(n,k,rng));let best=S0.f,bc=S0.col.slice();
+  if(!best||k<=1)return{col:bc,f:best};
+  let s=1,cnt=0;const lim=Math.min(smax,n);
+  function pick(S,kind){ // best improvement: bước có delta âm nhỏ nhất
+    let bd=0,mvv=null;
+    for(let u=0;u<n;u++){const a=S.col[u];if(!S.g[u*k+a])continue;
+      if(kind===1){for(let c=0;c<k;c++){if(c===a)continue;const d=S.g[u*k+c]-S.g[u*k+a];if(d<bd){bd=d;mvv=[1,u,c]}}}
+      else for(let v=0;v<n;v++){const b=S.col[v];if(b===a)continue;if(S.g[v*k+b]>0&&v<u)continue;
+        let d=S.g[u*k+b]-S.g[u*k+a]+S.g[v*k+a]-S.g[v*k+b];if(as[u].has(v))d-=2;if(d<bd){bd=d;mvv=[2,u,v]}}}
+    return mvv;
+  }
+  while(best>0&&now()<dl){
+    const S=mkS(adj,k,bc),pool=Array.from({length:n},(_,i)=>i);
+    for(let i=0;i<s;i++){const j=i+(rng()*(n-i)|0);[pool[i],pool[j]]=[pool[j],pool[i]];mv(adj,k,S,pool[i],other(S.col[pool[i]],k,rng));if(!S.f)return{col:S.col,f:0}}
+    let kind=1,acc=0;
+    while(kind<=2&&acc<n&&now()<dl){
+      const m=pick(S,kind);
+      if(!m){kind++;continue}
+      if(m[0]===1)mv(adj,k,S,m[1],m[2]);else{const a=S.col[m[1]],b=S.col[m[2]];mv(adj,k,S,m[1],b);mv(adj,k,S,m[2],a)}
+      if(!S.f)return{col:S.col,f:0}
+      kind=1;acc++;if((++cnt&15)===0)yield{prog:1,k,f:best};
+    }
+    if(S.f<best){best=S.f;bc=S.col.slice();s=1}else s=1+s%lim;
+    yield{prog:1,k,f:best};
+  }
+  return{col:bc,f:best};
+}
+const KERNELS={tabu:(a,k,i,dl,r)=>tabu(a,k,i,dl,r,Infinity),hea:hea,sa:sa,ga:ga,aco:aco,vns:vns};
 function* minimize(method,lim,rng){ // DSATUR rồi thử k = best-1, best-2, ...
   const adj=G.adj,t0=now(),dl=t0+lim*1000;
   let col=norm(dsatur(adj)),k=ncol(col);
   yield{col,k,t:0};
   while(k>G.lb&&now()<dl){
     const k2=k-1,init=col.map(c=>c<k2?c:rng()*k2|0);let r;
-    if(method==="tabu")r=yield*tabu(adj,k2,init,dl,rng,Infinity);else r=yield*hea(adj,k2,init,dl,rng);
+    r=yield*KERNELS[method](adj,k2,init,dl,rng);
     if(r.f===0){col=norm(r.col);k=k2;yield{col,k,t:now()-t0}}else break;
   }
   return{col,k};
 }
 function* simple(fn){const col=norm(fn(G.adj));yield{col,k:ncol(col),t:0};return{col,k:ncol(col)}}
-const NAMES={wp:"Welsh–Powell",dsatur:"DSATUR",tabu:"TabuCol",hea:"HEA (GPX)"};
+const NAMES={wp:"Welsh–Powell",dsatur:"DSATUR",tabu:"TabuCol",sa:"SA",ga:"GA",aco:"ACO",vns:"VNS",hea:"HEA (GPX)"};
 function makeGen(a,lim,rng){return a==="wp"?simple(welsh):a==="dsatur"?simple(dsatur):minimize(a,lim,rng)}
 
 /* ---------- Vẽ ---------- */
@@ -223,7 +335,7 @@ function draw(){
 }
 function drawChart(){
   const[x,w,h]=fit($("c"),()=>200);const sty=getComputedStyle(document.documentElement),mu=sty.getPropertyValue("--mu"),bd=sty.getPropertyValue("--bd");
-  x.clearRect(0,0,w,h);const L=34,B=22,T=8,R=8,lim=+$("lim").value;
+  x.clearRect(0,0,w,h);const L=34,B=22,T=44,R=8,lim=+$("lim").value;
   const all=Object.values(series).flat();if(!all.length){x.fillStyle=mu;x.font="12px system-ui";x.fillText("Chưa có dữ liệu – hãy chạy một thuật toán",L,h/2);return}
   const ymax=Math.max(...all.map(p=>p.k))+1,ymin=Math.max(0,G.lb-1),xs=t=>L+(w-L-R)*Math.min(t/(lim*1000),1),ys=k=>T+(h-T-B)*(ymax-k)/(ymax-ymin||1);
   x.strokeStyle=bd;x.fillStyle=mu;x.font="11px system-ui";x.textAlign="right";x.textBaseline="middle";
@@ -232,7 +344,7 @@ function drawChart(){
   let i=0;for(const[nm,pts]of Object.entries(series)){x.strokeStyle=COL[i%COL.length];x.lineWidth=2;x.beginPath();
     pts.forEach((p,j)=>{if(j)x.lineTo(xs(p.t),ys(pts[j-1].k));j?x.lineTo(xs(p.t),ys(p.k)):x.moveTo(xs(p.t),ys(p.k))});
     const last=pts[pts.length-1];x.lineTo(xs(Math.max(last.t,last.end||last.t)),ys(last.k));x.stroke();
-    x.fillStyle=COL[i%COL.length];x.textAlign="left";x.fillText("■ "+nm,L+6+i*96,T+6);i++}
+    x.fillStyle=COL[i%COL.length];x.textAlign="left";x.fillText("■ "+nm,L+6+(i%3)*104,10+Math.floor(i/3)*14);i++}
 }
 
 /* ---------- Chạy ---------- */
@@ -283,7 +395,7 @@ fetch("../data/").then(r=>r.ok?r.text():"").then(t=>{
 $("file").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{loadGraph(parseDimacs(r.result))}catch(err){$("msg").textContent="Lỗi đọc file: "+err.message}};r.readAsText(f)};
 $("run").onclick=()=>{series={};startJob($("alg").value)};
 $("stop").onclick=()=>{if(job)job.stop=true;queue=[]};
-$("all").onclick=()=>{series={};$("tb").innerHTML="";queue=["dsatur","tabu","hea"];startJob("wp")};
+$("all").onclick=()=>{series={};$("tb").innerHTML="";queue=["dsatur","tabu","sa","ga","aco","vns","hea"];startJob("wp")};
 addEventListener("resize",()=>{if(G){draw();drawChart()}});
 loadGraph(makeInstance("queen8"));
 </script>
